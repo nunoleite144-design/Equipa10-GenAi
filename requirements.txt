@@ -1,0 +1,9 @@
+torch
+torchaudio
+soundfile
+vector-quantize-pytorch
+huggingface_hub
+timm
+scipy
+numpy
+pytest

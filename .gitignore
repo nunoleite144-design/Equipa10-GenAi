@@ -1,0 +1,16 @@
+.env
+output/
+payloads/
+pretrained/
+__pycache__/
+*.pyc
+*.mp3
+*.wav
+*.aiff
+*.aac
+*.m4a
+*.ckpt
+*.pt
+*.pth
+.pytest_cache/
+.DS_Store
