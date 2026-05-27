@@ -10,7 +10,12 @@ import numpy as np
 import soundfile as sf
 import torch
 
-from semantic_payload import read_payload, tokens_from_base64, validate_payload
+from semantic_payload import (
+    SAMPLE_RATE,
+    read_payload,
+    tokens_from_base64,
+    validate_payload,
+)
 
 
 @dataclass(frozen=True)
@@ -60,23 +65,22 @@ def _create_model(
     )
 
 
-def decode_payload(
-    payload: dict,
-    output_dir: str | Path = "output",
-    gain: float = 1.5,
+def load_model(
+    *,
+    token_rate: int,
+    semantic_vocab_size: int,
     device: str = "cpu",
     cache_dir: str | None = None,
     ddim_steps: int = 50,
     cfg_scale: float = 2.0,
-) -> DecodeResult:
-    validate_payload(payload)
+):
+    """Build a SemantiCodec decoder.
 
-    tokens = tokens_from_base64(payload["tokens"])
-    token_rate = int(payload["token_rate"])
-    semantic_vocab_size = int(payload["semantic_vocab_size"])
-
-    print("Preparing SemantiCodec decoder...")
-    model = _create_model(
+    Exposed so long-running consumers (e.g. the received/ watcher) can build the
+    model once and reuse it across many messages instead of reloading the
+    checkpoints on every decode.
+    """
+    return _create_model(
         token_rate=token_rate,
         semantic_vocab_size=semantic_vocab_size,
         device=device,
@@ -84,6 +88,39 @@ def decode_payload(
         ddim_steps=ddim_steps,
         cfg_scale=cfg_scale,
     )
+
+
+def decode_tokens(
+    tokens: torch.Tensor,
+    *,
+    message_id: str,
+    token_rate: int,
+    semantic_vocab_size: int,
+    sample_rate: int = SAMPLE_RATE,
+    output_dir: str | Path = "output",
+    gain: float = 1.5,
+    device: str = "cpu",
+    cache_dir: str | None = None,
+    ddim_steps: int = 50,
+    cfg_scale: float = 2.0,
+    model=None,
+) -> DecodeResult:
+    """Reconstruct audio from a ready SemantiCodec token tensor.
+
+    This is the shared decode core. ``tokens`` must already be a tensor with
+    shape ``[batch, length, 2]`` (e.g. ``[1, N, 2]``). Pass ``model`` to reuse a
+    previously loaded decoder; otherwise one is built on demand.
+    """
+    if model is None:
+        print("Preparing SemantiCodec decoder...")
+        model = load_model(
+            token_rate=token_rate,
+            semantic_vocab_size=semantic_vocab_size,
+            device=device,
+            cache_dir=cache_dir,
+            ddim_steps=ddim_steps,
+            cfg_scale=cfg_scale,
+        )
     tokens = tokens.to(model.device)
 
     started = time.perf_counter()
@@ -94,11 +131,11 @@ def decode_payload(
     audio = normalize_audio(reconstructed_waveform, gain=gain)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"{payload['message_id']}.wav"
-    sf.write(output_path, audio, int(payload["sample_rate"]))
+    output_path = output_dir / f"{message_id}.wav"
+    sf.write(output_path, audio, int(sample_rate))
 
     return DecodeResult(
-        message_id=str(payload["message_id"]),
+        message_id=str(message_id),
         token_rate=token_rate,
         semantic_vocab_size=semantic_vocab_size,
         tokens_shape=list(tokens.shape),
@@ -106,6 +143,34 @@ def decode_payload(
         gain=gain,
         ddim_steps=ddim_steps,
         audio_file=output_path,
+    )
+
+
+def decode_payload(
+    payload: dict,
+    output_dir: str | Path = "output",
+    gain: float = 1.5,
+    device: str = "cpu",
+    cache_dir: str | None = None,
+    ddim_steps: int = 50,
+    cfg_scale: float = 2.0,
+) -> DecodeResult:
+    """Decode a canonical SemantiCodec payload (torch_pt_base64 tokens)."""
+    validate_payload(payload)
+
+    tokens = tokens_from_base64(payload["tokens"])
+    return decode_tokens(
+        tokens,
+        message_id=str(payload["message_id"]),
+        token_rate=int(payload["token_rate"]),
+        semantic_vocab_size=int(payload["semantic_vocab_size"]),
+        sample_rate=int(payload["sample_rate"]),
+        output_dir=output_dir,
+        gain=gain,
+        device=device,
+        cache_dir=cache_dir,
+        ddim_steps=ddim_steps,
+        cfg_scale=cfg_scale,
     )
 
 

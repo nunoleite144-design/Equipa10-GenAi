@@ -1,8 +1,12 @@
-# Integration - GenAI Receiver
+# Integração - GenAI Receiver
 
-Este documento descreve o papel do repositório GenAI dentro do sistema global do projeto académico **Semantic Audio Communication using Generative AI - Receiver**.
+Este documento descreve o papel do repositório GenAI dentro do sistema global do
+projeto académico **Semantic Audio Communication using Generative AI - Receiver** e
+o contrato de integração com as outras subequipas.
 
-O objetivo deste repositório não é implementar a WebApp nem todo o sistema MQTT. O objetivo principal é receber um payload SemantiCodec válido, reconstruir o áudio no Receiver e disponibilizar resultados claros para integração futura.
+O objetivo deste repositório não é implementar a WebApp nem todo o sistema MQTT. É
+receber os tokens SemantiCodec, reconstruir o áudio no Receiver e disponibilizar
+resultados claros (`.wav` + estado) para a WebApp.
 
 ## Fluxo global
 
@@ -10,7 +14,7 @@ O objetivo deste repositório não é implementar a WebApp nem todo o sistema MQ
 Áudio original
   -> Equipa 9 / Transmitter
   -> SemantiCodec encode
-  -> payload SemantiCodec
+  -> payload com tokens
   -> Comunicação / MQTT
   -> Equipa 10 / GenAI Receiver
   -> SemantiCodec decode
@@ -18,160 +22,86 @@ O objetivo deste repositório não é implementar a WebApp nem todo o sistema MQ
   -> WebApp / demonstração
 ```
 
-Em paralelo, a Equipa 9 pode gerar texto com Whisper:
+Em paralelo, a Equipa 9 gera texto com Whisper:
 
 ```text
-Áudio original
-  -> Whisper
-  -> transcrição textual
-  -> WebApp / demonstração
+Áudio original -> Whisper -> transcrição textual -> WebApp / demonstração
 ```
 
-A transcrição Whisper é apenas metadado auxiliar para visualização. Não substitui o payload SemantiCodec e não entra no processo de decode do GenAI.
+A transcrição Whisper é apenas metadado auxiliar para visualização. Não substitui os
+tokens SemantiCodec e não entra no processo de decode do GenAI.
 
-## Papel do SemantiCodec
+## O GenAI é SemantiCodec
 
-SemantiCodec é o codec principal do pipeline de áudio.
+SemantiCodec é o codec principal do pipeline de áudio: tokens semânticos -> áudio
+direto, **sem TTS e sem reconstrução de texto**.
 
-No lado Transmitter, SemantiCodec transforma o áudio original em tokens semânticos. Esses tokens são serializados num payload JSON e enviados ao Receiver.
-
-No lado GenAI Receiver, o payload é validado, os tokens são recuperados e o SemantiCodec faz o decode para reconstruir o áudio.
-
-O fluxo principal do GenAI é:
+No lado Transmitter, transforma o áudio em tokens semânticos. No lado GenAI Receiver,
+os tokens são validados e o SemantiCodec faz o decode para reconstruir o áudio.
 
 ```text
-payload SemantiCodec -> tokens -> SemantiCodec decode -> áudio reconstruído
+tokens SemantiCodec -> SemantiCodec decode -> áudio reconstruído
 ```
 
-## Papel do Whisper
+## Componentes (lado GenAI)
 
-Whisper é usado apenas para gerar texto complementar, por exemplo uma transcrição do áudio original.
+- `semantic_payload.py` — contrato/serialização canónica (tokens em base64 de tensor
+  torch); usado pelas CLIs de teste local (`semantic_demo.py`, etc.).
+- `semantic_receiver.py` — `decode_tokens(tensor, ...)` (core de decode partilhado),
+  `decode_payload(...)` (formato canónico), `load_model(...)` (construir o modelo
+  uma vez e reutilizar).
+- `comunicacao_adapter.py` — converte o JSON da Comunicação (tokens em lista `[N,2]`)
+  num tensor `[1,N,2]` e chama o core. Ignora o campo `text` (Whisper).
+- `received_watcher.py` — vigia a pasta `received/`, reutiliza o modelo entre
+  mensagens e escreve `output/<id>.wav` + `output/<id>_status.json`.
 
-Esse texto pode ser útil para a WebApp mostrar contexto durante a demonstração, mas não deve ser usado para reconstruir áudio.
+## Handoff Comunicação -> GenAI (por ficheiro)
 
-O fluxo Whisper deve ficar separado do fluxo SemantiCodec:
+A Comunicação trata do MQTT e da desencriptação e **grava um JSON por mensagem** em
+`received/`. O GenAI vigia essa pasta e reconstrói o áudio; não subscreve MQTT
+diretamente.
 
-```text
-transcrição Whisper -> metadado visual -> WebApp
-```
+## Contrato de entrada (Comunicação -> GenAI)
 
-## Payload esperado pelo GenAI
-
-O GenAI espera receber um payload JSON com tokens SemantiCodec.
-
-Exemplo conceptual:
+Cada ficheiro em `received/` é um JSON com os tokens já em claro:
 
 ```json
 {
-  "message_id": "msg-001",
-  "type": "semanticodec_tokens",
-  "codec": "semanticodec",
+  "message_id": "<uuid>",
+  "tokens": [[semantico, acustico], "..."],
   "token_rate": 100,
   "semantic_vocab_size": 16384,
   "sample_rate": 16000,
-  "tokens_format": "torch_pt_base64",
-  "tokens_shape": [1, 1000, 1],
-  "tokens": "..."
+  "text": "transcrição Whisper (opcional, só para a WebApp)"
 }
 ```
 
-Campos principais:
+| Campo | Obrigatório | Notas |
+|---|---|---|
+| `message_id` | sim | preservado no nome do `.wav` e no estado |
+| `tokens` | sim | lista 2D `[N,2]` (semântico, acústico) |
+| `token_rate` | sim | 25, 50 ou 100 — tem de ser igual ao encode da Equipa 9 |
+| `semantic_vocab_size` | sim | 4096, 8192, 16384 ou 32768 — igual ao encode |
+| `sample_rate` | opcional | por defeito 16000 |
+| `text` | opcional | transcrição Whisper; não entra na reconstrução |
 
-- `message_id`: identificador comum para correlacionar payload, áudio reconstruído, logs e possível texto Whisper.
-- `type`: deve ser `semanticodec_tokens`.
-- `codec`: deve ser `semanticodec`.
-- `token_rate`: taxa de tokens usada pelo SemantiCodec. Valores atuais: `25`, `50` ou `100`.
-- `semantic_vocab_size`: tamanho do vocabulário semântico. Valores atuais: `4096`, `8192`, `16384` ou `32768`.
-- `sample_rate`: atualmente `16000`.
-- `tokens_format`: atualmente `torch_pt_base64`.
-- `tokens_shape`: forma dos tokens, útil para diagnóstico.
-- `tokens`: tokens serializados em base64.
+`token_rate` e `semantic_vocab_size` têm de circular por toda a cadeia: Equipa 9
+(encode) -> Comunicação (preserva no JSON) -> GenAI. Se faltarem no JSON, o decode usa
+100/16384 por defeito e avisa, mas um valor errado produz áudio inintelígivel.
 
-## Outputs produzidos pelo GenAI
+> Nota: para ferramentas e testes locais existe também o formato canónico
+> (`semantic_payload.py`), em que os tokens vão como tensor torch em base64
+> (`tokens_format: torch_pt_base64`, com os campos `type`/`codec`). É equivalente;
+> o `comunicacao_adapter.py` é que trata da forma em lista enviada pela Comunicação.
 
-O output principal do GenAI é um ficheiro de áudio reconstruído:
+## Saída (GenAI -> WebApp)
 
-```text
-output/<message_id>.wav
-```
+- `output/<message_id>.wav`
+- `output/<message_id>_status.json`
 
-Também são relevantes os metadados de execução:
+Estados válidos: `received`, `validating`, `decoding`, `completed`, `failed`.
 
-- `message_id`
-- estado do processamento
-- caminho do ficheiro de áudio reconstruído
-- `codec`
-- `token_rate`
-- `semantic_vocab_size`
-- `sample_rate`
-- `tokens_shape`
-- latência de decode
-- parâmetros usados no decode, como `gain`, `ddim_steps` e `cfg_scale`
-- erro, se o processamento falhar
-
-## Informação futura para a WebApp
-
-A WebApp deverá conseguir apresentar:
-
-- estado do processamento: recebido, em validação, em decode, concluído ou erro;
-- áudio reconstruído;
-- `message_id`;
-- transcrição Whisper, quando existir;
-- latência de decode;
-- codec usado;
-- parâmetros técnicos relevantes para a demonstração;
-- mensagens de erro simples e compreensíveis.
-
-O texto Whisper deve ser associado ao mesmo `message_id`, mas deve continuar separado do processo de decode.
-
-## Contrato conceptual: Comunicação -> GenAI
-
-Responsabilidade da Comunicação:
-
-- receber ou encaminhar o payload SemantiCodec produzido pela Equipa 9;
-- garantir que o payload chega ao módulo GenAI;
-- preservar `message_id`;
-- distinguir mensagens de tokens SemantiCodec de mensagens de transcrição Whisper;
-- decidir tópicos MQTT, QoS, ordem, retry e eventual fragmentação de mensagens grandes.
-
-Mensagem esperada pelo GenAI:
-
-```json
-{
-  "message_id": "msg-001",
-  "type": "semanticodec_tokens",
-  "codec": "semanticodec",
-  "token_rate": 100,
-  "semantic_vocab_size": 16384,
-  "sample_rate": 16000,
-  "tokens_format": "torch_pt_base64",
-  "tokens": "..."
-}
-```
-
-Mensagens de Whisper devem ser tratadas como outro tipo de mensagem, por exemplo:
-
-```json
-{
-  "message_id": "msg-001",
-  "type": "whisper_transcript",
-  "text": "..."
-}
-```
-
-O GenAI não deve depender desta mensagem para reconstruir áudio.
-
-## Contrato conceptual: GenAI -> WebApp
-
-Responsabilidade do GenAI:
-
-- informar se o payload foi validado;
-- informar se o decode foi concluido;
-- disponibilizar o áudio reconstruído;
-- expor metadados úteis para a demonstração;
-- reportar erros de forma clara.
-
-Exemplo conceptual de resultado:
+Exemplo de estado de sucesso:
 
 ```json
 {
@@ -182,11 +112,14 @@ Exemplo conceptual de resultado:
   "sample_rate": 16000,
   "token_rate": 100,
   "semantic_vocab_size": 16384,
-  "decode_latency_ms": 12345
+  "tokens_shape": [1, 504, 2],
+  "decode_latency_ms": 12345,
+  "ddim_steps": 50,
+  "gain": 1.5
 }
 ```
 
-Exemplo conceptual de erro:
+Exemplo de erro:
 
 ```json
 {
@@ -194,26 +127,20 @@ Exemplo conceptual de erro:
   "status": "failed",
   "stage": "payload_validation",
   "error_code": "invalid_payload",
-  "error_message": "Payload missing required field(s): tokens"
+  "error_message": "Payload missing 'message_id'."
 }
 ```
 
-## Dúvidas em aberto
+## Como correr
 
-A equipa ainda precisa de fechar:
+Ver `COMO_TESTAR.md`.
 
+## Dúvidas em aberto / pendências
+
+- Equipa 9 + Comunicação: incluir `token_rate` e `semantic_vocab_size` no JSON.
+- Alinhar a versão do `paho-mqtt` (o módulo de Comunicação usa a API 1.x).
+- Mover a chave AES de `config.py` (módulo de Comunicação) para variável de ambiente / `.env`.
 - Que tópicos MQTT vão ser usados para tokens SemantiCodec e transcrição Whisper.
-- Se o texto Whisper chega diretamente à WebApp ou se passa também pela Comunicação do Receiver.
-- Se mensagens grandes com tokens vão precisar de fragmentação.
-- Qual o limite máximo aceitável de tamanho do payload.
-- Como a WebApp vai aceder ao ficheiro `.wav`: caminho local, endpoint HTTP, storage partilhado ou outro mecanismo.
-- Que estados oficiais serão usados: `received`, `validating`, `decoding`, `completed`, `failed`, etc.
-- Que formato final de erro deve ser partilhado entre departamentos.
-- Se o formato `torch_pt_base64` é suficiente para a demo final ou se será necessário um formato mais neutro no futuro.
-- Quem é responsável por limpar ficheiros antigos em `payloads/` e `output/`.
-
-## Decisão atual
-
-A decisão atual é manter SemantiCodec como caminho principal de reconstrução de áudio.
-
-Whisper existe apenas como metadado textual auxiliar para a WebApp. Não é input do GenAI para decode e não substitui os tokens SemantiCodec.
+- Como a WebApp vai aceder ao `.wav`: caminho local, endpoint HTTP, storage partilhado.
+- Limite máximo de tamanho do payload e eventual fragmentação de mensagens grandes.
+- Formato de erro a partilhar entre subequipas.

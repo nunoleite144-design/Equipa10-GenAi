@@ -3,6 +3,7 @@ torchaudio
 soundfile
 vector-quantize-pytorch
 huggingface_hub
+requests
 timm
 scipy
 numpy
