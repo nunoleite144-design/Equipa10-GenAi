@@ -14,3 +14,11 @@ __pycache__/
 *.pth
 .pytest_cache/
 .DS_Store
+
+# Scaffolding de teste / ficheiros locais (não fazem parte do entregável)
+_live_test/
+_demo_input/
+run_live_demo.ps1
+output_*/
+*.out
+*.err
