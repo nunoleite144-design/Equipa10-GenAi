@@ -1,6 +1,33 @@
 # Como correr e testar o Receiver GenAI
 
-Pré-requisitos: Python 3.12 e `pip install -r requirements.txt`.
+Pré-requisitos: Python 3.12.
+
+## Preparação (primeira vez)
+
+1. Clonar o repositório e garantir que se está no `main`:
+
+   ```powershell
+   git clone https://github.com/nunoleite144-design/Equipa10-GenAi.git
+   cd Equipa10-GenAi
+   git checkout main
+   ```
+
+2. Instalar as dependências (demora — está a instalar o Torch):
+
+   ```powershell
+   python -m pip install -r requirements.txt
+   ```
+
+3. Descarregar o modelo SemantiCodec **uma vez** (~2,3 GB do Hugging Face). Copiar as
+   duas linhas, colar no PowerShell e esperar até aparecer `Pronto`:
+
+   ```powershell
+   $env:KMP_DUPLICATE_LIB_OK="TRUE"
+   python -c "from semantic_receiver import load_model; load_model(token_rate=100, semantic_vocab_size=16384); print('Pronto')"
+   ```
+
+   Depois disto fica em cache e o decode passa a ser rápido. Convém fazê-lo com
+   antecedência, para não estar a descarregar durante a demonstração.
 
 ## Estrutura de pastas (deploy)
 
