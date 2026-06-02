@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the full local SemantiCodec demo: audio -> JSON payload -> reconstructed audio."""
+"""Demo local completa do SemantiCodec: áudio -> payload JSON -> áudio reconstruído."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ import sys
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run SemantiCodec transmitter and receiver demos")
-    parser.add_argument("audio", help="Input audio file")
+    parser = argparse.ArgumentParser(description="Demos do transmitter e do receiver SemantiCodec")
+    parser.add_argument("audio", help="Ficheiro de áudio de entrada")
     parser.add_argument("--message-id", default="msg-001")
     parser.add_argument("--gain", type=float, default=1.5)
     parser.add_argument("--receiver-device", default="cpu", choices=("auto", "cpu", "cuda", "mps"))

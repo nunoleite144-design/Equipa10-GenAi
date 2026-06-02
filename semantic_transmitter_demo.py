@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Encode audio into a SemantiCodec JSON payload for MQTT-style transmission."""
+"""Codifica áudio num payload JSON do SemantiCodec."""
 
 from __future__ import annotations
 
@@ -14,19 +14,19 @@ from semanticodec import SemantiCodec
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="SemantiCodec transmitter demo")
-    parser.add_argument("audio", help="Input audio file, preferably a short .wav")
-    parser.add_argument("--message-id", default="msg-001", help="Message ID for the payload")
+    parser = argparse.ArgumentParser(description="Transmitter SemantiCodec")
+    parser.add_argument("audio", help="Ficheiro de áudio de entrada, de preferência um .wav curto")
+    parser.add_argument("--message-id", default="msg-001", help="Identificador da mensagem")
     parser.add_argument(
         "--device",
         default="auto",
         choices=("auto", "cpu", "cuda", "mps"),
-        help="Torch device. Use cpu if mps/cuda causes issues.",
+        help="Dispositivo Torch. Usar cpu se mps/cuda der problemas.",
     )
     parser.add_argument(
         "--cache-dir",
         default=None,
-        help="Checkpoint cache directory. Defaults outside Documents/iCloud.",
+        help="Pasta de cache dos checkpoints.",
     )
     parser.add_argument("--token-rate", type=int, default=100, choices=(25, 50, 100))
     parser.add_argument(
@@ -35,8 +35,8 @@ def parse_args() -> argparse.Namespace:
         default=16384,
         choices=(4096, 8192, 16384, 32768),
     )
-    parser.add_argument("--output-dir", default="payloads", help="Directory for JSON payloads")
-    parser.add_argument("--pretty-json", action="store_true", help="Write readable JSON instead of compact MQTT JSON")
+    parser.add_argument("--output-dir", default="payloads", help="Pasta para os payloads JSON")
+    parser.add_argument("--pretty-json", action="store_true", help="Escreve JSON legível em vez de compacto")
     return parser.parse_args()
 
 
@@ -44,9 +44,9 @@ def main() -> int:
     args = parse_args()
     audio_path = Path(args.audio)
     if not audio_path.exists():
-        raise SystemExit(f"Error: audio file not found: {audio_path}")
+        raise SystemExit(f"Erro: ficheiro de áudio não encontrado: {audio_path}")
 
-    print("Preparing SemantiCodec encoder...")
+    print("A preparar o encoder SemantiCodec...")
     model = SemantiCodec(
         token_rate=args.token_rate,
         semantic_vocab_size=args.semantic_vocab_size,
@@ -71,7 +71,7 @@ def main() -> int:
     write_payload(output_path, payload, pretty=args.pretty_json)
     size_kb = output_path.stat().st_size / 1024
 
-    print("Payload created successfully")
+    print("Payload criado com sucesso")
     print(f"  message_id: {args.message_id}")
     print(f"  tokens_shape: {list(tokens.shape)}")
     print(f"  encode_latency_ms: {encode_ms}")

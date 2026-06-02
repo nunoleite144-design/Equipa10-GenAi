@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shared payload helpers for SemantiCodec MQTT-style JSON packages."""
+"""Serialização e validação do payload JSON do SemantiCodec."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ SAMPLE_RATE = 16000
 
 
 class PayloadError(Exception):
-    """User-facing payload validation error."""
+    """Erro de validação do payload."""
 
 
 def tokens_to_base64(tokens: torch.Tensor) -> str:

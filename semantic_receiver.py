@@ -1,4 +1,4 @@
-"""Reusable SemantiCodec receiver helpers."""
+"""Reconstrução de áudio a partir de tokens do SemantiCodec."""
 
 from __future__ import annotations
 
@@ -74,12 +74,7 @@ def load_model(
     ddim_steps: int = 50,
     cfg_scale: float = 2.0,
 ):
-    """Build a SemantiCodec decoder.
-
-    Exposed so long-running consumers (e.g. the received/ watcher) can build the
-    model once and reuse it across many messages instead of reloading the
-    checkpoints on every decode.
-    """
+    """Constrói o descodificador SemantiCodec (para carregar uma vez e reutilizar)."""
     return _create_model(
         token_rate=token_rate,
         semantic_vocab_size=semantic_vocab_size,
@@ -105,14 +100,12 @@ def decode_tokens(
     cfg_scale: float = 2.0,
     model=None,
 ) -> DecodeResult:
-    """Reconstruct audio from a ready SemantiCodec token tensor.
+    """Reconstrói áudio a partir de um tensor de tokens com forma [batch, N, 2].
 
-    This is the shared decode core. ``tokens`` must already be a tensor with
-    shape ``[batch, length, 2]`` (e.g. ``[1, N, 2]``). Pass ``model`` to reuse a
-    previously loaded decoder; otherwise one is built on demand.
+    Se ``model`` for None, o descodificador é construído na primeira utilização.
     """
     if model is None:
-        print("Preparing SemantiCodec decoder...")
+        print("A preparar o descodificador SemantiCodec...")
         model = load_model(
             token_rate=token_rate,
             semantic_vocab_size=semantic_vocab_size,
@@ -155,7 +148,7 @@ def decode_payload(
     ddim_steps: int = 50,
     cfg_scale: float = 2.0,
 ) -> DecodeResult:
-    """Decode a canonical SemantiCodec payload (torch_pt_base64 tokens)."""
+    """Descodifica um payload canónico do SemantiCodec (tokens em torch_pt_base64)."""
     validate_payload(payload)
 
     tokens = tokens_from_base64(payload["tokens"])

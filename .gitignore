@@ -1,5 +1,8 @@
 .env
 output/
+received/
+processed/
+failed/
 payloads/
 pretrained/
 __pycache__/

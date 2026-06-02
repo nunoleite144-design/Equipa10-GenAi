@@ -53,7 +53,9 @@ tokens SemantiCodec -> SemantiCodec decode -> áudio reconstruído
 - `comunicacao_adapter.py` — converte o JSON da Comunicação (tokens em lista `[N,2]`)
   num tensor `[1,N,2]` e chama o core. Ignora o campo `text` (Whisper).
 - `received_watcher.py` — vigia a pasta `received/`, reutiliza o modelo entre
-  mensagens e escreve `output/<id>.wav` + `output/<id>_status.json`.
+  mensagens, escreve `output/<id>.wav` + `output/<id>_status.json` e move cada JSON
+  tratado para `received/processed/` (ou `received/failed/` em erro). Arranca em modo
+  automático contínuo via `run_genai_receiver.ps1`.
 
 ## Handoff Comunicação -> GenAI (por ficheiro)
 
@@ -135,9 +137,19 @@ Exemplo de erro:
 
 Ver `COMO_TESTAR.md`.
 
+## Resolvido
+
+- **`token_rate` / `semantic_vocab_size`:** por acordo a Equipa 9 usa sempre
+  100 / 16384 e **não** envia estes campos no JSON. O GenAI usa esses valores por
+  defeito (`comunicacao_adapter.DEFAULT_TOKEN_RATE` / `DEFAULT_SEMANTIC_VOCAB_SIZE`);
+  um JSON pode sobrepô-los se algum dia for preciso.
+- **Formato dos `tokens`:** o adaptador aceita lista achatada (`[s,a,s,a,...]`) e
+  aninhada (`[[s,a],...]`).
+- **Arranque do GenAI:** `run_genai_receiver.ps1` (modo automático contínuo), a vigiar
+  a pasta de entrega combinada com a Comunicação.
+
 ## Dúvidas em aberto / pendências
 
-- Equipa 9 + Comunicação: incluir `token_rate` e `semantic_vocab_size` no JSON.
 - Alinhar a versão do `paho-mqtt` (o módulo de Comunicação usa a API 1.x).
 - Mover a chave AES de `config.py` (módulo de Comunicação) para variável de ambiente / `.env`.
 - Que tópicos MQTT vão ser usados para tokens SemantiCodec e transcrição Whisper.

@@ -26,6 +26,25 @@ def test_tokens_to_tensor_passthrough_when_already_batched():
     assert tokens.shape == (1, 2, 2)
 
 
+def test_tokens_to_tensor_accepts_flat_row_major_pairs():
+    # A Comunicação envia os tokens achatados: [s, a, s, a, ...]
+    tokens = tokens_to_tensor([10, 20, 30, 40, 50, 60])
+    assert tokens.shape == (1, 3, 2)
+    assert tokens.dtype == torch.long
+    assert tokens.tolist() == [[[10, 20], [30, 40], [50, 60]]]
+
+
+def test_tokens_to_tensor_flat_matches_nested_equivalent():
+    flat = tokens_to_tensor([1, 2, 3, 4])
+    nested = tokens_to_tensor([[1, 2], [3, 4]])
+    assert torch.equal(flat, nested)
+
+
+def test_tokens_to_tensor_rejects_flat_odd_length():
+    with pytest.raises(AdapterError):
+        tokens_to_tensor([1, 2, 3])
+
+
 def test_tokens_to_tensor_rejects_wrong_columns():
     with pytest.raises(AdapterError):
         tokens_to_tensor([[1, 2, 3], [4, 5, 6]])
@@ -53,6 +72,21 @@ def test_resolve_params_falls_back_to_defaults_when_missing():
 def test_resolve_params_rejects_invalid_values():
     with pytest.raises(AdapterError):
         resolve_params({"token_rate": 7, "semantic_vocab_size": 16384})
+
+
+def test_defaults_are_the_agreed_100_16384():
+    assert DEFAULT_TOKEN_RATE == 100
+    assert DEFAULT_SEMANTIC_VOCAB_SIZE == 16384
+
+
+def test_resolve_params_defaults_silently_without_warning(capsys):
+    # Quando o payload não traz token_rate / semantic_vocab_size, o caso normal,
+    # não deve ser impresso qualquer aviso.
+    result = resolve_params({"sample_rate": 16000})
+    assert result == (100, 16384, 16000)
+    out = capsys.readouterr().out
+    assert "WARNING" not in out
+    assert "garbage" not in out
 
 
 def test_decode_comm_payload_requires_message_id():
@@ -94,5 +128,5 @@ def test_decode_comm_payload_bridges_to_core_and_ignores_text(monkeypatch):
     assert captured["tokens"].shape == (1, 2, 2)
     assert captured["kwargs"]["token_rate"] == 100
     assert captured["kwargs"]["semantic_vocab_size"] == 16384
-    # text must never be forwarded to the decode core
+    # o campo text nunca deve ser passado ao decode
     assert "text" not in captured["kwargs"]
