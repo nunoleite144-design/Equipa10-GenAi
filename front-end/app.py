@@ -1,7 +1,8 @@
 """Interface Streamlit para o Recetor SemantiCodec — Equipa 10.
 
-Monitoriza a pasta ``output/`` gerada pelo received_watcher.py e permite
-descodificar payloads manualmente via upload de ficheiro JSON.
+Dois modos:
+  • Modo Técnico — monitorização completa do watcher, upload manual, historial
+  • Modo Demo    — interface simples e apelativa para demonstrações públicas
 """
 
 from __future__ import annotations
@@ -33,9 +34,50 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------------------------
+# CSS global
+# ---------------------------------------------------------------------------
+st.markdown("""
+<style>
+/* Modo Demo — cartões grandes */
+.demo-step {
+    border-radius: 16px;
+    padding: 32px 24px;
+    text-align: center;
+    margin-bottom: 8px;
+}
+.demo-step-inactive { background: #1e2130; border: 2px solid #2d3250; }
+.demo-step-active   { background: #1a3a5c; border: 2px dashed #4da6ff;
+                       animation: pulse 1.5s infinite; }
+.demo-step-done     { background: #12352a; border: 2px solid #2ecc71; }
+
+@keyframes pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(77,166,255,0.4); }
+    70%  { box-shadow: 0 0 0 14px rgba(77,166,255,0); }
+    100% { box-shadow: 0 0 0 0 rgba(77,166,255,0); }
+}
+
+.demo-icon   { font-size: 56px; margin-bottom: 12px; }
+.demo-title  { font-size: 22px; font-weight: 700; margin-bottom: 6px; }
+.demo-sub    { font-size: 14px; color: #aaa; }
+
+.arrow-demo  { font-size: 36px; text-align: center; color: #4da6ff;
+               padding: 4px 0; }
+
+/* Badge de estado simples */
+.badge-ok   { background:#145a32; color:#2ecc71; border-radius:8px;
+               padding:4px 12px; font-weight:700; display:inline-block; }
+.badge-wait { background:#1a2a40; color:#4da6ff; border-radius:8px;
+               padding:4px 12px; font-weight:700; display:inline-block; }
+.badge-err  { background:#4a1010; color:#e74c3c; border-radius:8px;
+               padding:4px 12px; font-weight:700; display:inline-block; }
+</style>
+""", unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------------
 # Estado da sessão
 # ---------------------------------------------------------------------------
-defaults = {
+defaults: dict = {
+    "modo_demo": False,
     "auto_refresh": False,
     "last_refresh": 0.0,
     "watcher_pid": None,
@@ -44,6 +86,9 @@ defaults = {
     "gain": 1.5,
     "cfg_scale": 2.0,
     "device": "cpu",
+    "demo_step": 0,          # 0=espera 1=a receber 2=a reconstruir 3=pronto
+    "demo_audio": None,      # caminho do último áudio no modo demo
+    "demo_latencia": None,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -54,7 +99,6 @@ for k, v in defaults.items():
 # ---------------------------------------------------------------------------
 
 def ler_status_files() -> list[dict]:
-    """Lê todos os _status.json da pasta output/ e devolve lista ordenada (mais recente primeiro)."""
     if not OUTPUT_DIR.exists():
         return []
     ficheiros = sorted(
@@ -73,18 +117,26 @@ def ler_status_files() -> list[dict]:
     return resultados
 
 
+def ultimo_audio_concluido() -> tuple[str | None, dict | None]:
+    """Devolve (caminho_wav, status_dict) da mensagem mais recente concluída."""
+    for s in ler_status_files():
+        if s.get("status") == "completed":
+            p = s.get("audio_file")
+            if p and Path(p).exists():
+                return p, s
+    return None, None
+
+
 def cor_status(status: str) -> str:
     return {"completed": "🟢", "decoding": "🟡", "failed": "🔴"}.get(status, "⚪")
 
 
 def _processo_vivo(pid: int) -> bool:
-    """Verifica se um PID está ativo (compatível com Windows e Unix)."""
     try:
         import psutil
         return psutil.pid_exists(pid)
     except ImportError:
         pass
-    # Fallback: tenta via tasklist no Windows
     try:
         result = subprocess.run(
             ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
@@ -145,57 +197,219 @@ def formatar_shape(shape: list | None) -> str:
         return "—"
     return " × ".join(str(d) for d in shape)
 
+
 # ---------------------------------------------------------------------------
-# Sidebar — Configurações
+# Sidebar
 # ---------------------------------------------------------------------------
 with st.sidebar:
     st.title("📡 Recetor GenAI")
     st.caption("Equipa 10 — SemantiCodec Decoder")
     st.divider()
 
-    st.subheader("⚙️ Configurações do Decoder")
+    st.session_state.modo_demo = st.toggle(
+        "🎭 Modo Demonstração",
+        value=st.session_state.modo_demo,
+        help="Ativa interface simplificada para demonstrações públicas",
+    )
 
-    st.session_state.ddim_steps = st.slider(
-        "DDIM Steps", min_value=10, max_value=100, value=st.session_state.ddim_steps, step=5,
-        help="Mais passos = maior qualidade, mais lento",
-    )
-    st.session_state.gain = st.slider(
-        "Ganho de Áudio", min_value=0.5, max_value=3.0, value=st.session_state.gain, step=0.1,
-        help="Amplificação após normalização",
-    )
-    st.session_state.cfg_scale = st.slider(
-        "CFG Scale", min_value=0.0, max_value=5.0, value=st.session_state.cfg_scale, step=0.5,
-        help="Escala de guidance do diffusion decoder",
-    )
+    st.divider()
+
+    st.subheader("⚙️ Decoder")
+    st.session_state.ddim_steps = st.slider("DDIM Steps", 10, 100, st.session_state.ddim_steps, 5)
+    st.session_state.gain = st.slider("Ganho", 0.5, 3.0, st.session_state.gain, 0.1)
+    st.session_state.cfg_scale = st.slider("CFG Scale", 0.0, 5.0, st.session_state.cfg_scale, 0.5)
     st.session_state.device = st.selectbox(
         "Dispositivo", ["cpu", "cuda", "mps", "auto"],
         index=["cpu", "cuda", "mps", "auto"].index(st.session_state.device),
     )
 
     st.divider()
-
     st.subheader("📂 Pasta Vigiada")
-    watch_dir_input = st.text_input(
-        "Caminho",
-        value=str(RECEIVED_DIR),
-        help="Pasta onde a Comunicação deposita os JSON",
-    )
+    watch_dir_input = st.text_input("Caminho", value=str(RECEIVED_DIR))
 
+    if not st.session_state.modo_demo:
+        st.divider()
+        st.subheader("🔄 Auto-Refresh")
+        st.session_state.auto_refresh = st.toggle("Ativo", value=st.session_state.auto_refresh)
+
+
+# ===========================================================================
+# MODO DEMO
+# ===========================================================================
+if st.session_state.modo_demo:
+
+    st.markdown("""
+    <div style="text-align:center; padding: 8px 0 24px 0;">
+        <div style="font-size:42px;">📡</div>
+        <div style="font-size:32px; font-weight:800; letter-spacing:1px;">
+            Comunicação Semântica de Áudio
+        </div>
+        <div style="font-size:16px; color:#aaa; margin-top:6px;">
+            A tua voz é transformada em código, enviada pela rede e reconstruída por Inteligência Artificial
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # --- Controlo do watcher invisível ao utilizador ---
+    ativo = watcher_ativo()
+
+    # Botão principal
+    col_btn = st.columns([1, 2, 1])[1]
+    with col_btn:
+        if not ativo:
+            if st.button("▶  Ligar o Recetor", type="primary", use_container_width=True):
+                iniciar_watcher(watch_dir_input)
+                time.sleep(0.4)
+                st.session_state.demo_step = 1
+                st.session_state.demo_audio = None
+                st.rerun()
+        else:
+            if st.button("⏹  Desligar o Recetor", use_container_width=True):
+                parar_watcher()
+                st.session_state.demo_step = 0
+                st.rerun()
+
+    st.write("")
+
+    # --- Descobrir estado atual ---
+    audio_path, audio_status = ultimo_audio_concluido()
+
+    # Verificar se há algo novo desde o último áudio mostrado
+    if audio_path and audio_path != st.session_state.demo_audio:
+        st.session_state.demo_audio = audio_path
+        st.session_state.demo_latencia = audio_status.get("decode_latency_ms") if audio_status else None
+        st.session_state.demo_step = 3
+
+    if ativo and st.session_state.demo_step < 3:
+        # Verificar se está a fazer decode agora
+        decoding_now = any(s.get("status") == "decoding" for s in ler_status_files())
+        st.session_state.demo_step = 2 if decoding_now else 1
+
+    # --- Diagrama de 3 passos ---
+    c1, ca, c2, cb, c3 = st.columns([3, 1, 3, 1, 3])
+
+    step = st.session_state.demo_step
+
+    def card_class(n: int) -> str:
+        if step == n:
+            return "demo-step demo-step-active"
+        if step > n:
+            return "demo-step demo-step-done"
+        return "demo-step demo-step-inactive"
+
+    def check(n: int) -> str:
+        return "✅" if step > n else ""
+
+    with c1:
+        st.markdown(f"""
+        <div class="{card_class(1)}">
+            <div class="demo-icon">🎙️</div>
+            <div class="demo-title">1. Voz Recebida {check(1)}</div>
+            <div class="demo-sub">A aguardar sinal da rede...</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with ca:
+        st.markdown('<div class="arrow-demo" style="margin-top:60px;">→</div>', unsafe_allow_html=True)
+
+    with c2:
+        st.markdown(f"""
+        <div class="{card_class(2)}">
+            <div class="demo-icon">🧠</div>
+            <div class="demo-title">2. IA a Reconstruir {check(2)}</div>
+            <div class="demo-sub">Inteligência Artificial a regenerar a voz...</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with cb:
+        st.markdown('<div class="arrow-demo" style="margin-top:60px;">→</div>', unsafe_allow_html=True)
+
+    with c3:
+        st.markdown(f"""
+        <div class="{card_class(3)}">
+            <div class="demo-icon">🔊</div>
+            <div class="demo-title">3. Áudio Pronto {check(3)}</div>
+            <div class="demo-sub">Pronto para ouvir!</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.write("")
+
+    # --- Player de áudio (destaque) ---
+    if step == 3 and st.session_state.demo_audio:
+        st.markdown("""
+        <div style="text-align:center; font-size:22px; font-weight:700;
+                    color:#2ecc71; margin: 16px 0 8px 0;">
+            ✅ Voz reconstruída com sucesso!
+        </div>
+        """, unsafe_allow_html=True)
+
+        audio_col = st.columns([1, 3, 1])[1]
+        with audio_col:
+            st.audio(st.session_state.demo_audio, format="audio/wav")
+
+        if st.session_state.demo_latencia:
+            lat_s = st.session_state.demo_latencia / 1000
+            st.markdown(f"""
+            <div style="text-align:center; color:#aaa; font-size:13px; margin-top:4px;">
+                A Inteligência Artificial demorou <b style="color:#fff">{lat_s:.1f} segundos</b>
+                a reconstruir esta voz a partir de código semântico
+            </div>
+            """, unsafe_allow_html=True)
+
+        st.write("")
+        reset_col = st.columns([1, 2, 1])[1]
+        with reset_col:
+            if st.button("🔁  Aguardar próxima mensagem", use_container_width=True):
+                st.session_state.demo_step = 1
+                st.session_state.demo_audio = None
+                st.rerun()
+
+    elif step == 2:
+        prog_col = st.columns([1, 3, 1])[1]
+        with prog_col:
+            st.progress(0.6, text="🧠 A reconstruir áudio com IA...")
+
+    elif step == 1 and ativo:
+        info_col = st.columns([1, 3, 1])[1]
+        with info_col:
+            st.info("📶 Recetor ligado. À espera de mensagem do transmissor...")
+
+    elif step == 0:
+        info_col = st.columns([1, 3, 1])[1]
+        with info_col:
+            st.warning("🔌 Liga o recetor para começar.")
+
+    # --- Curiosidade educativa ---
+    st.write("")
     st.divider()
-    st.subheader("🔄 Auto-Refresh")
-    st.session_state.auto_refresh = st.toggle("Atualizar automaticamente", value=st.session_state.auto_refresh)
-    if st.session_state.auto_refresh:
-        st.caption("A interface atualiza a cada 3 segundos.")
+    st.markdown("""
+    <div style="text-align:center; color:#888; font-size:13px; max-width:600px; margin:0 auto;">
+        <b style="color:#aaa">Como funciona?</b><br>
+        Em vez de enviar o áudio completo pela rede (que ocupa muito espaço),
+        o transmissor extrai apenas o <i>significado</i> da voz — tokens semânticos.
+        No recetor, uma Inteligência Artificial reconstrói o áudio a partir desses tokens,
+        como se "imaginasse" de volta a voz original.
+    </div>
+    """, unsafe_allow_html=True)
 
-# ---------------------------------------------------------------------------
-# Cabeçalho principal
-# ---------------------------------------------------------------------------
+    # Auto-refresh no modo demo
+    if ativo and step < 3:
+        time.sleep(2.5)
+        st.rerun()
+
+    st.stop()
+
+
+# ===========================================================================
+# MODO TÉCNICO
+# ===========================================================================
 st.title("📡 Recetor Semântico de Áudio")
 st.caption("Equipa 10 · SemantiCodec + GenAI · Receção e Reconstrução de Áudio")
 st.divider()
 
 # ---------------------------------------------------------------------------
-# Secção 1 — Watcher (daemon de escuta)
+# Secção 1 — Watcher
 # ---------------------------------------------------------------------------
 col_w1, col_w2, col_w3 = st.columns([2, 1, 1])
 
@@ -233,7 +447,7 @@ else:
 st.divider()
 
 # ---------------------------------------------------------------------------
-# Secção 2 — Upload manual de payload JSON
+# Secção 2 — Upload manual
 # ---------------------------------------------------------------------------
 st.subheader("2. Descodificação Manual (Upload de Payload)")
 
@@ -257,16 +471,12 @@ with st.expander("Carregar ficheiro JSON de payload", expanded=False):
             payload = None
 
         if payload is not None:
-            # Gravar temporariamente em received/ para o decode usar o adapter
-            tmp_path = OUTPUT_DIR / f"_manual_{ficheiro_upload.name}"
             OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-            tmp_path.write_bytes(payload_bytes)
 
             with st.spinner("A carregar modelo e a reconstruir áudio... (pode demorar 1-2 min na primeira vez)"):
-                import sys as _sys
-                _sys.path.insert(0, str(BASE_DIR))
+                sys.path.insert(0, str(BASE_DIR))
                 try:
-                    from comunicacao_adapter import decode_comm_payload, read_comm_payload, resolve_params
+                    from comunicacao_adapter import decode_comm_payload, resolve_params
                     from semantic_receiver import load_model
 
                     token_rate, vocab, sample_rate = resolve_params(payload)
@@ -300,11 +510,7 @@ with st.expander("Carregar ficheiro JSON de payload", expanded=False):
                     st.success(f"Áudio reconstruído em {formatar_latencia(result.decode_latency_ms)}!")
                 except Exception as exc:
                     st.error(f"Erro ao descodificar: {exc}")
-                finally:
-                    if tmp_path.exists():
-                        tmp_path.unlink()
 
-    # Mostrar resultado do decode manual
     res = st.session_state.manual_decode_result
     if res:
         audio_path = Path(res["audio_file"])
@@ -318,7 +524,7 @@ with st.expander("Carregar ficheiro JSON de payload", expanded=False):
 st.divider()
 
 # ---------------------------------------------------------------------------
-# Secção 3 — Histórico de mensagens recebidas
+# Secção 3 — Histórico
 # ---------------------------------------------------------------------------
 st.subheader("3. Mensagens Recebidas")
 
@@ -332,7 +538,6 @@ status_list = ler_status_files()
 if not status_list:
     st.info("Nenhuma mensagem processada ainda. Inicia o Watcher e aguarda pacotes da Comunicação.")
 else:
-    # Métricas resumo
     total = len(status_list)
     concluidos = sum(1 for s in status_list if s.get("status") == "completed")
     em_decode = sum(1 for s in status_list if s.get("status") == "decoding")
@@ -346,7 +551,6 @@ else:
 
     st.write("")
 
-    # Lista de mensagens
     for entrada in status_list:
         status = entrada.get("status", "unknown")
         msg_id = entrada.get("message_id", "—")
@@ -365,9 +569,9 @@ else:
         label = f"{icone} `{msg_id}` — {status.upper()} — {ts}"
         with st.expander(label, expanded=(status == "decoding")):
             if status == "completed" and audio_file:
-                audio_path = Path(audio_file)
-                if audio_path.exists():
-                    st.audio(str(audio_path), format="audio/wav")
+                audio_p = Path(audio_file)
+                if audio_p.exists():
+                    st.audio(str(audio_p), format="audio/wav")
                     ca, cb, cc, cd = st.columns(4)
                     ca.metric("Latência Decode", formatar_latencia(latencia))
                     cb.metric("Tokens", formatar_shape(tokens_shape))
@@ -377,36 +581,30 @@ else:
                     ce.metric("Vocab Size", vocab or "—")
                     cf.metric("Gain", gain_val or "—")
                 else:
-                    st.warning(f"Ficheiro de áudio não encontrado: {audio_file}")
-
+                    st.warning(f"Ficheiro não encontrado: {audio_file}")
             elif status == "decoding":
-                st.info("A descodificar... aguarda.")
+                st.info("A descodificar...")
                 st.progress(0.5)
-
             elif status == "failed":
-                stage = entrada.get("stage", "")
-                err_code = entrada.get("error_code", "")
-                st.error(f"**Fase:** {stage} | **Código:** {err_code}")
+                st.error(f"**Fase:** {entrada.get('stage','')} | **Código:** {entrada.get('error_code','')}")
                 if erro:
                     st.code(erro, language="text")
-
             else:
                 st.json({k: v for k, v in entrada.items() if not k.startswith("_")})
 
 st.divider()
 
 # ---------------------------------------------------------------------------
-# Auto-refresh
+# Auto-refresh (modo técnico)
 # ---------------------------------------------------------------------------
 if st.session_state.auto_refresh:
     now = time.time()
-    if now - st.session_state.last_refresh >= 3.0:
+    elapsed = now - st.session_state.last_refresh
+    if elapsed >= 3.0:
         st.session_state.last_refresh = now
-        time.sleep(3.0)
         st.rerun()
     else:
-        remaining = 3.0 - (now - st.session_state.last_refresh)
-        time.sleep(max(0.1, remaining))
+        time.sleep(3.0 - elapsed)
         st.session_state.last_refresh = time.time()
         st.rerun()
 
