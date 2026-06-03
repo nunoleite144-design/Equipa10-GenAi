@@ -1,0 +1,4 @@
+# Dependências do módulo de comunicação MQTT — Equipa 10 ESIST
+paho-mqtt>=1.6.1
+cryptography>=41.0.0
+torch>=2.0.0
