@@ -416,17 +416,17 @@ else:
     # Se processo terminou, procurar por novo áudio
     if st.session_state.genai_logs and st.session_state.last_audio_file is None:
         repo_root = Path(__file__).resolve().parents[1]
-            output_dir = repo_root / "genai" / "output"
-            # Primeiro tenta encontrar um WAV novo; se não houver, mostra o mais recente
-            audio_file = find_new_wav_file(output_dir, st.session_state.existing_wavs_before)
-            if audio_file is None and output_dir.exists():
-                wavs = list(output_dir.glob("*.wav"))
-                if wavs:
-                    audio_file = max(wavs, key=lambda p: p.stat().st_mtime)
+        output_dir = repo_root / "genai" / "output"
+        # Primeiro tenta encontrar um WAV novo; se não houver, mostra o mais recente
+        audio_file = find_new_wav_file(output_dir, st.session_state.existing_wavs_before)
+        if audio_file is None and output_dir.exists():
+            wavs = list(output_dir.glob("*.wav"))
+            if wavs:
+                audio_file = max(wavs, key=lambda p: p.stat().st_mtime)
 
-            if audio_file is not None:
-                st.session_state.last_audio_file = audio_file
-                st.success(msg_recon_sucesso)
+        if audio_file is not None:
+            st.session_state.last_audio_file = audio_file
+            st.success(msg_recon_sucesso)
 
 # Mostrar áudio e botão de download
 if st.session_state.last_audio_file is not None and st.session_state.last_audio_file.exists():
