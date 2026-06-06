@@ -36,8 +36,13 @@ $env:KMP_DUPLICATE_LIB_OK            = "TRUE"
 $env:HF_HUB_DISABLE_SYMLINKS_WARNING = "1"
 $env:PYTHONIOENCODING                = "utf-8"
 
-$py = "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe"
-if (-not (Test-Path $py)) { $py = "python" }
+# Prioridade: 1) venv do projeto  2) Python 3.12 do sistema  3) python do PATH
+$venv = Join-Path (Split-Path -Parent $repo) "venv\Scripts\python.exe"
+$py312 = "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe"
+if     (Test-Path $venv) { $py = $venv }
+elseif (Test-Path $py312) { $py = $py312 }
+else                      { $py = "python" }
+Write-Host "  Python        : $py"
 
 Write-Host "Receiver GenAI (SemantiCodec) - modo automatico"
 Write-Host "  Pasta vigiada : $WatchDir"
