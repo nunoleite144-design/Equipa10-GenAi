@@ -36,30 +36,53 @@ if 'watcher_pid' not in st.session_state:
 # ---------------------------------------------------------------------------
 
 def _watcher_vivo() -> bool:
-    """Verifica se o processo watcher ainda está ativo."""
+    """Verifica se o processo watcher ainda está ativo (Windows e Unix)."""
     pid = st.session_state.watcher_pid
     if pid is None:
         return False
     try:
-        result = subprocess.run(
-            ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
-            capture_output=True, text=True, timeout=3,
-        )
-        return str(pid) in result.stdout
-    except Exception:
+        # Unix: os.kill com sinal 0 apenas verifica se o processo existe
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, PermissionError):
+        st.session_state.watcher_pid = None
         return False
+    except OSError:
+        # Windows não suporta os.kill com sinal 0 — usa tasklist
+        try:
+            result = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+                capture_output=True, text=True, timeout=3,
+            )
+            return str(pid) in result.stdout
+        except Exception:
+            return False
 
 
 def _iniciar_watcher() -> None:
-    """Lança o run_genai_receiver.ps1 em background."""
-    proc = subprocess.Popen(
-        [
+    """Lança o watcher em background.
+
+    Windows -> corre o run_genai_receiver.ps1 via PowerShell.
+    Linux/Mac -> corre o received_watcher.py diretamente com Python do venv (ou PATH).
+    """
+    import platform
+    if platform.system() == "Windows":
+        cmd = [
             "powershell",
             "-ExecutionPolicy", "Bypass",
             "-File", str(PS1_SCRIPT),
-        ],
-        cwd=str(GENAI_DIR),
-    )
+        ]
+    else:
+        # Ubuntu / macOS: usa o Python do venv se existir, senão sys.executable
+        venv_python = REPO_DIR / "venv" / "bin" / "python"
+        python = str(venv_python) if venv_python.exists() else sys.executable
+        cmd = [
+            python,
+            str(GENAI_DIR / "received_watcher.py"),
+            "--watch-dir", str(REPO_DIR / "comunicacao" / "received"),
+            "--output-dir", str(GENAI_DIR / "output"),
+        ]
+    proc = subprocess.Popen(cmd, cwd=str(GENAI_DIR))
     st.session_state.watcher_pid = proc.pid
 
 
