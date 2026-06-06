@@ -219,6 +219,8 @@ def run_genai_receiver(watch_dir: Path, output_dir: Path, ddim_steps: int = 25, 
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            encoding='utf-8',
+            errors='replace',
             cwd=str(genai_dir),
             env=env,
             bufsize=1,
@@ -413,22 +415,18 @@ if st.session_state.genai_process is not None:
 else:
     # Se processo terminou, procurar por novo áudio
     if st.session_state.genai_logs and st.session_state.last_audio_file is None:
-        if 'existing_wavs_before' in st.session_state:
-            repo_root = Path(__file__).resolve().parents[1]
+        repo_root = Path(__file__).resolve().parents[1]
             output_dir = repo_root / "genai" / "output"
+            # Primeiro tenta encontrar um WAV novo; se não houver, mostra o mais recente
             audio_file = find_new_wav_file(output_dir, st.session_state.existing_wavs_before)
-            
+            if audio_file is None and output_dir.exists():
+                wavs = list(output_dir.glob("*.wav"))
+                if wavs:
+                    audio_file = max(wavs, key=lambda p: p.stat().st_mtime)
+
             if audio_file is not None:
                 st.session_state.last_audio_file = audio_file
                 st.success(msg_recon_sucesso)
-            else:
-                # Verificar se há ficheiros JSON em received/
-                received_dir = repo_root / "comunicacao" / "received"
-                json_files = list(received_dir.glob("*.json"))
-                if not json_files:
-                    st.warning("⚠️ Nenhum ficheiro JSON encontrado em comunicacao/received/. Certifique-se que o receiver MQTT está ligado e recebendo mensagens.")
-                else:
-                    st.info(f"ℹ️ {len(json_files)} ficheiro(s) JSON encontrado(s), mas nenhum áudio foi gerado. Verifique os logs acima.")
 
 # Mostrar áudio e botão de download
 if st.session_state.last_audio_file is not None and st.session_state.last_audio_file.exists():
