@@ -9,6 +9,7 @@ import queue
 import platform
 import sys
 import os
+from deep_translator import GoogleTranslator
 
 st.set_page_config(page_title="Receiver - Equipa 10", layout="wide")
 
@@ -444,6 +445,46 @@ if st.session_state.last_audio_file is not None and st.session_state.last_audio_
         mime="audio/wav",
         use_container_width=True,
     )
+
+st.divider()
+
+if st.session_state.idioma == "Português 🇵🇹":
+    st.subheader("🌍 Módulo de Tradução")
+    txt_label = "Texto recebido da equipa transmissora:"
+    txt_dest = "Escolhe a língua de destino:"
+    btn_trad = "Traduzir Texto"
+    msg_trad_loading = "A traduzir..."
+    msg_trad_aviso = "Por favor, insere algum texto para testar."
+else:
+    st.subheader("🌍 Translation Module")
+    txt_label = "Text received from the transmitting team:"
+    txt_dest = "Choose target language:"
+    btn_trad = "Translate Text"
+    msg_trad_loading = "Translating..."
+    msg_trad_aviso = "Please insert some text to test."
+
+texto_original = st.text_area(txt_label)
+
+idiomas = {
+    "Português": "pt",
+    "Inglês": "en",
+    "Espanhol": "es",
+    "Francês": "fr",
+    "Alemão": "de"
+}
+
+idioma_escolhido = st.selectbox(txt_dest, list(idiomas.keys()))
+
+if st.button(btn_trad, type="secondary"):
+    if texto_original:
+        with st.spinner(msg_trad_loading):
+            codigo_idioma = idiomas[idioma_escolhido]
+            tradutor = GoogleTranslator(source='auto', target=codigo_idioma)
+            resultado = tradutor.translate(texto_original)
+            
+        st.info(resultado)
+    else:
+        st.warning(msg_trad_aviso)
 
 # Auto-refresh para atualizar logs quando receiver está ativo
 if st.session_state.conectado and st.session_state.receiver_process is not None:

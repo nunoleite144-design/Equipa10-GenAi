@@ -17,12 +17,16 @@ import time
 import uuid
 import random
 from datetime import datetime, timezone
+import base64
+import io
+import os
 
 import torch
 import paho.mqtt.client as mqtt
 
 import config
 from crypto import encrypt_payload, key_from_hex
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 # -----------------------------------------------------------------------------
 # Mensagens de teste (tokens aleatórios — só para smoke test)
@@ -76,6 +80,60 @@ def build_payload(text: str, tokens: list, use_crypto: bool) -> dict:
         payload["tokens"] = tokens
         if text:
             payload["text"] = text
+    return payload
+
+
+def build_team9_packet(text: str, tokens: list, use_crypto: bool, pt_bytes: bytes | None) -> dict:
+    if not use_crypto:
+        raise ValueError("Team9 packet requires crypto enabled (--no-crypto not allowed with --team9)")
+
+    # Inner payload: token_file (base64 .pt) + transcript_text
+    if pt_bytes is None:
+        # Build an in-memory .pt from tokens
+        buf = io.BytesIO()
+        tensor = torch.tensor(tokens)
+        torch.save(tensor, buf)
+        pt_bytes = buf.getvalue()
+
+    inner = {
+        "token_file": base64.b64encode(pt_bytes).decode("ascii"),
+        "transcript_text": text or "",
+        "language_detected": "pt",
+        "stt_meta": {},
+    }
+
+    plaintext = json.dumps(inner, ensure_ascii=False).encode("utf-8")
+
+    # Encrypt using AES-256-GCM (nonce separate from ciphertext)
+    key = key_from_hex(config.ENCRYPTION_KEY)
+    nonce = os.urandom(12)
+    aesgcm = AESGCM(key)
+    ciphertext = aesgcm.encrypt(nonce, plaintext, associated_data=None)
+
+    secure = {
+        "cipher": "AES-256-GCM",
+        "ciphertext_b64": base64.b64encode(ciphertext).decode("ascii"),
+        "nonce_b64": base64.b64encode(nonce).decode("ascii"),
+    }
+
+    packet = {
+        "packet_id": str(uuid.uuid4()),
+        "packet_type": "semantic_audio_codec",
+        "protocol_version": "2.0",
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "sender": {"team": "Transmitter"},
+        "language_hint": "pt",
+        "audio_profile": {"sample_rate_hz": 16000},
+        "semantic_encoding": {"token_count": len(tokens)},
+        "secure_payload": secure,
+    }
+
+    payload = {
+        "message_id": str(uuid.uuid4()),
+        "timestamp": int(time.time()),
+        "topic": config.TOPIC_SUBSCRIBE,
+        "packet": packet,
+    }
 
     return payload
 
@@ -85,6 +143,13 @@ def send_one(client, text: str, tokens: list, use_crypto: bool):
     raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     client.publish(config.TOPIC_SUBSCRIBE, raw, qos=config.QOS)
     print(f"  → Enviado id={payload['message_id']}  tokens={len(tokens)}  texto='{text}'")
+
+
+def send_one_team9(client, text: str, tokens: list, use_crypto: bool, pt_bytes: bytes | None):
+    payload = build_team9_packet(text, tokens, use_crypto, pt_bytes)
+    raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    client.publish(config.TOPIC_SUBSCRIBE, raw, qos=config.QOS)
+    print(f"  → Enviado TEAM9 id={payload['message_id']}  tokens={len(tokens)}  texto='{text}'")
 
 
 def main():
@@ -102,9 +167,15 @@ def main():
                         help="Segundos entre mensagens no loop (default: 3)")
     parser.add_argument("--no-crypto", action="store_true",
                         help="Enviar tokens em plaintext (sem encriptação)")
+    parser.add_argument("--team9", action="store_true",
+                        help="Enviar no formato real Equipa 9 (secure_payload separado)")
     args = parser.parse_args()
 
     use_crypto = not args.no_crypto
+
+    if args.team9 and not use_crypto:
+        print("ERRO: --team9 requer encriptação activa. Remova --no-crypto.")
+        return
 
     print("=" * 55)
     print("  ESIST — Simulador Equipa 9")
@@ -119,8 +190,14 @@ def main():
 
     # Carregar tokens do ficheiro .pt se indicado
     pt_tokens = None
+    pt_file_bytes = None
     if args.file:
         pt_tokens = load_tokens_from_pt(args.file)
+        try:
+            with open(args.file, "rb") as f:
+                pt_file_bytes = f.read()
+        except Exception:
+            pt_file_bytes = None
 
     client = mqtt.Client(client_id="equipa9_sim")
     client.connect(args.ip, args.port, keepalive=60)
@@ -137,20 +214,32 @@ def main():
                     tokens = pt_tokens
                 else:
                     text, tokens = SAMPLE_MESSAGES[i % len(SAMPLE_MESSAGES)]
-                send_one(client, text, tokens, use_crypto)
+                if args.team9:
+                    send_one_team9(client, text, tokens, use_crypto, pt_file_bytes)
+                else:
+                    send_one(client, text, tokens, use_crypto)
                 i += 1
                 time.sleep(args.interval)
         else:
             if pt_tokens:
                 # Enviar o ficheiro .pt real
-                send_one(client, text, pt_tokens, use_crypto)
+                if args.team9:
+                    send_one_team9(client, text, pt_tokens, use_crypto, pt_file_bytes)
+                else:
+                    send_one(client, text, pt_tokens, use_crypto)
             elif args.msg:
                 tokens = [random.randint(0, 511) for _ in range(12)]
-                send_one(client, args.msg, tokens, use_crypto)
+                if args.team9:
+                    send_one_team9(client, args.msg, tokens, use_crypto, pt_file_bytes)
+                else:
+                    send_one(client, args.msg, tokens, use_crypto)
             else:
                 # Enviar as 4 mensagens de teste
                 for text, tokens in SAMPLE_MESSAGES:
-                    send_one(client, text, tokens, use_crypto)
+                    if args.team9:
+                        send_one_team9(client, text, tokens, use_crypto, pt_file_bytes)
+                    else:
+                        send_one(client, text, tokens, use_crypto)
                     time.sleep(0.5)
 
     except KeyboardInterrupt:
