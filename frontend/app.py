@@ -359,7 +359,7 @@ st.write("")
 st.write("")
 
 if st.session_state.dados_prontos:
-    col_recon1, col_recon2 = st.columns([3, 1])
+    col_recon1, = st.columns([1])
     
     with col_recon1:
         if st.button(btn_reconstruir, type="primary", use_container_width=True, disabled=st.session_state.genai_process is not None):
@@ -381,11 +381,6 @@ if st.session_state.dados_prontos:
                     st.rerun()
                 else:
                     st.error(st.session_state.genai_error)
-    
-    with col_recon2:
-        if st.button("🗑️", use_container_width=True, help="Limpar logs"):
-            st.session_state.genai_logs = []
-            st.rerun()
 
 # Mostrar informações sobre o status do reconstrução
 if st.session_state.genai_process is not None:
